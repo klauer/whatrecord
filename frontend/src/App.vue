@@ -38,6 +38,19 @@ export default {
 </script>
 
 <style>
+body {
+  background-color: var(--surface-a);
+  font-family: var(--font-family);
+  font-weight: 400;
+  color: var(--text-color);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+a {
+  text-decoration: none;
+  color: #2196f3;
+  font-weight: 500;
+}
 .p-tabmenu	{
   margin-bottom: 5px;
 }

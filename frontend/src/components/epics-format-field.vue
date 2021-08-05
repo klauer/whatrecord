@@ -99,7 +99,8 @@ ${this.field_info_text}
 
 <style scoped>
 .unassuming_link {
-  color: black;
-  text-decoration:none;
+  color: var(--text-color);
+  text-decoration: none;
+  font-weight: normal;
 }
 </style>

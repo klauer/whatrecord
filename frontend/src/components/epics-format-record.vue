@@ -80,21 +80,6 @@ export default {
 </script>
 
 <style scoped>
-.code {
-  background: #efefef;
-  border-left: 3px solid lightgreen;
-  color: black;
-  display: block;
-  font-family: monospace;
-  font-size: 15px;
-  line-height: 1.0;
-  margin-bottom: 1.6em;
-  max-width: 100%;
-  overflow: auto;
-  padding: 15px;
-  page-break-inside: avoid;
-  word-wrap: break-word;
-}
 .unassuming_link {
   color: black;
   text-decoration:none;

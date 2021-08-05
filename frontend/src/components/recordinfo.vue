@@ -245,9 +245,9 @@ iframe {
 }
 
 .code {
-  background: #efefef;
-  border-left: 3px solid lightgreen;
-  color: black;
+  background: var(--surface-f);
+  border-left: 3px solid var(--surface-600);
+  color: var(--text-color);
   display: block;
   font-family: monospace;
   font-size: 15px;

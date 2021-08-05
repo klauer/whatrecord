@@ -298,11 +298,11 @@ export default {
 }
 
 #related_records tr:nth-child(even){
-  background-color: #f2f2f2;
+  background-color: var(--surface-b);
 }
 
 #related_records tr:hover {
-  background-color: #ddd;
+  background-color: var(--surface-c);
 }
 
 #related_records th {
