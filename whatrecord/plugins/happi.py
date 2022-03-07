@@ -10,6 +10,7 @@ import collections
 import fnmatch
 import json
 import logging
+import sys
 import typing
 from dataclasses import dataclass
 from typing import Dict, Generator, List, Tuple, Type, TypeVar, Union
@@ -91,7 +92,9 @@ def get_all_devices(
             obj = client[dev].get()
         except Exception:
             logger.exception("Failed to instantiate device: %s", dev)
+            # print("failed to instantiate", dev)
         else:
+            # print("instantiated", dev)
             yield obj
 
 
@@ -186,17 +189,33 @@ def patch_and_use_dummy_shim():
     class _PVStandIn:
         _reference_count = 0
 
-        def __init__(self, pvname, *args, **kwargs):
+        def __init__(self, pvname, *args, callback=None, **kwargs):
+            # print("pv", pvname, file=sys.stderr)
             self.pvname = pvname
             self.connected = True
+            self._statistics = dict(gets=0, puts=0, callbacks=0, waits=0)
+            if callback is not None:
+                self.add_callback(at_init=callback)
 
-        add_callback = _no_op
         remove_callback = _no_op
         clear_callbacks = _no_op
-        get = _no_op
-        put = _no_op
         get_with_metadata = _no_op
-        wait_for_connection = _no_op
+
+        def wait_for_connection(self, *args, **kwargs):
+            print("wait_for_connection!", self.pvname, args, kwargs)
+            self._statistics["waits"] = self._statistics["waits"] + 1
+
+        def add_callback(self, *args, **kwargs):
+            # print("add_callback!", self.pvname, args, kwargs)
+            self._statistics["callbacks"] = self._statistics["callbacks"] + 1
+
+        def get(self, *args, **kwargs):
+            print("get!", self.pvname, args, kwargs)
+            self._statistics["gets"] = self._statistics["gets"] + 1
+
+        def put(self, *args, **kwargs):
+            print("put!", self.pvname, args, kwargs)
+            self._statistics["puts"] = self._statistics["puts"] + 1
 
     def get_pv(pvname, *args, **kwargs):
         return _PVStandIn(pvname)
@@ -334,7 +353,7 @@ def _get_argparser(parser: typing.Optional[argparse.ArgumentParser] = None):
     return parser
 
 
-@suppress_output_decorator
+# @suppress_output_decorator
 def main(search_criteria: str, pretty: bool = False):
     client = happi.Client.from_config()
 
@@ -352,11 +371,31 @@ def main(search_criteria: str, pretty: bool = False):
             item["name"]: dict(item)
             for item in dict(client).values()
         },
+        metadata={},
         execution_info={},
     )
 
     criteria = _parse_criteria(search_criteria)
     for root, record, sig in find_signal_metadata_pairs(criteria):
+        if root.name not in results.metadata:
+            results.metadata[root.name] = {}
+
+        for pv_attr in ("_read_pv", "_write_pv"):
+            try:
+                pv = getattr(sig, pv_attr)
+                st = pv._statistics
+            except AttributeError:
+                ...
+            else:
+                if any(v > 0 for v in st.values()):
+                    dct = results.metadata[root.name].setdefault(
+                        pv.pvname,
+                        {key: 0 for key in st},
+                    )
+                    for key, count in st.items():
+                        dct[key] += count
+                    print(pv.pvname, dct)
+
         if "." in record:
             record, *_ = record.split(".")
 
@@ -389,7 +428,7 @@ def _cli_main():
     results = main(**vars(args))
     json_results = apischema.serialize(results)
     dump_args = {"indent": 4} if args.pretty else {}
-    print(json.dumps(json_results, sort_keys=True, **dump_args))
+    # print(json.dumps(json_results, sort_keys=True, **dump_args))
 
 
 if __name__ == "__main__":
