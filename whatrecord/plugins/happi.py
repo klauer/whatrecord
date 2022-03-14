@@ -11,6 +11,7 @@ import fnmatch
 import json
 import logging
 import sys
+import threading
 import typing
 from dataclasses import dataclass
 from typing import Dict, Generator, List, Tuple, Type, TypeVar, Union
@@ -89,12 +90,20 @@ def get_all_devices(
 
     for dev in client:
         try:
+            init_thread_count = threading.active_count()
             obj = client[dev].get()
         except Exception:
             logger.exception("Failed to instantiate device: %s", dev)
             # print("failed to instantiate", dev)
         else:
             # print("instantiated", dev)
+            new_threads = threading.active_count() - init_thread_count
+            print("new threads for", obj.name, new_threads)
+            # if new_threads > 0:
+            #     obj.md = dict(obj.md)
+            #     obj.md["_whatrecord"] = {
+            #         "threads": new_threads
+            #     }
             yield obj
 
 
@@ -126,10 +135,17 @@ def get_devices_by_criteria(
     search_method = client.search_regex if regex else client.search
     for item in search_method(**search_criteria):
         try:
+            init_thread_count = threading.active_count()
             obj = item.get()
         except Exception:
             logger.exception("Failed to instantiate device: %s", obj)
+            # print("failed to instantiate", obj)
         else:
+            # print("instantiated", obj)
+            new_threads = threading.active_count() - init_thread_count
+            print("new threads for", obj.name, new_threads)
+            if new_threads > 0:
+                obj.md.setdefault("_whatrecord", {})["threads"] = new_threads
             yield obj
 
 
@@ -369,7 +385,7 @@ def main(search_criteria: str, pretty: bool = False):
         record_to_metadata_keys=collections.defaultdict(list),
         metadata_by_key={
             item["name"]: dict(item)
-            for item in dict(client).values()
+            for item in client.values()  #  [client["xcs_lodcm"]]
         },
         metadata={},
         execution_info={},
@@ -426,8 +442,8 @@ def _cli_main():
     parser = _get_argparser()
     args = parser.parse_args()
     results = main(**vars(args))
-    json_results = apischema.serialize(results)
-    dump_args = {"indent": 4} if args.pretty else {}
+    # json_results = apischema.serialize(results)
+    # dump_args = {"indent": 4} if args.pretty else {}
     # print(json.dumps(json_results, sort_keys=True, **dump_args))
 
 
