@@ -21,7 +21,9 @@ export default defineConfig(({ command, mode }) => {
   return {
     define: {
       __APP_ENV__: env.APP_ENV,
+      __VUE_PROD_DEVTOOLS__: mode !== "production",
     },
+    // base: "./",
     mode: mode,
     plugins: [vue()],
     envPrefix: "WHATRECORD_",

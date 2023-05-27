@@ -2,8 +2,11 @@ import asyncio
 import collections
 import fnmatch
 import functools
+import gzip
+import json
 import logging
 import os
+import pathlib
 import re
 import tempfile
 
@@ -19,12 +22,13 @@ import graphviz
 from aiohttp import web
 
 from .. import common, gateway, graph, ioc_finder, settings
-from ..common import LoadContext, RecordInstance, StringWithContext, WhatRecord
-from ..shell import (LoadedIoc, ScriptContainer, ShellState,
+from ..common import (AnyPath, LoadContext, RecordInstance, StringWithContext,
+                      WhatRecord)
+from ..shell import (IocshScript, LoadedIoc, ScriptContainer, ShellState,
                      load_startup_scripts_with_metadata)
 from .common import (IocGetDuplicatesResponse, IocGetMatchesResponse,
-                     IocGetMatchingRecordsResponse, IocMetadata, PVGetInfo,
-                     PVGetMatchesResponse, PVRelationshipResponse,
+                     IocGetMatchingRecordsResponse, IocMetadata, PluginResults,
+                     PVGetInfo, PVGetMatchesResponse, PVRelationshipResponse,
                      PVShortRelationshipResponse, ServerPluginSpec,
                      TooManyRecordsError)
 from .util import TaskHandler
@@ -112,6 +116,138 @@ class ServerState:
         ]
         self._update_count = 0
 
+    async def trigger_manual_update(self) -> None:
+        """Manual re-scan of everything."""
+        updated = await self._update_script_step()
+        logger.debug(
+            "Manual update trigger. Updates %s",
+            "found" if updated else "not found",
+        )
+        for plugin in self.plugins:
+            await self._update_plugin(plugin)
+
+        self.script_relations = graph.build_script_relations(
+            self.container.database,
+            self.container.pv_relations,
+        )
+
+    def dump_file(self, filename: AnyPath, recorded_hash: str = "") -> dict:
+        # TODO recorded hash may differ from what's on disk!
+        ioc_name = self.container.startup_script_to_ioc.get(str(filename), None)
+        if ioc_name:
+            logger.debug("File %s is from IOC %s", filename, ioc_name)
+            loaded_ioc = self.container.scripts[ioc_name]
+            script_info = loaded_ioc.script
+            ioc_md = loaded_ioc.metadata
+            return {
+                "script": apischema.serialize(IocshScript, script_info),
+                "ioc": apischema.serialize(IocMetadata, ioc_md),
+            }
+
+        try:
+            with open(filename, "rt") as fp:
+                lines = fp.read().splitlines()
+        except Exception as ex:
+            lines = [
+                f"whatrecord unable to dump file due to "
+                f"{ex.__class__.__name__}: {ex}"
+            ]
+
+        return {
+            "script": None,
+            "ioc": None,
+            "lines": lines,
+        }
+
+    def dump_iocs(self) -> dict:
+        return {
+            ioc.metadata.name: {
+                "md": apischema.serialize(IocMetadata, ioc.metadata),
+                "ioc": apischema.serialize(LoadedIoc, ioc),
+            }
+            for ioc in self.container.scripts.values()
+            if ioc.metadata and ioc.metadata.name
+        }
+
+    def dump_plugins(self) -> dict:
+        return {
+            plugin.name: apischema.serialize(
+                Optional[PluginResults],
+                plugin.results,
+            )
+            for plugin in self.plugins
+        }
+
+    def dump_files(self) -> dict:
+        return {
+            fn: self.dump_file(fn, hash)
+            for fn, hash in self.container.loaded_files.items()
+        }
+
+    async def dump_pv_relations(self) -> dict:
+        relation_graphs = {}
+        for record in self.container.database:
+            if record in self.container.pv_relations:
+                logger.info(
+                    "Generating graph for record %s which has %d relation(s)",
+                    record,
+                    len(self.container.pv_relations[record]),
+                )
+                graph = self.get_graph(  # get_graph_rendered
+                    (record,),
+                    graph_type="record",
+                    # format="svg",
+                )
+                # rendered = await self.get_graph_rendered(
+                #     (record,),
+                #     graph_type="record",
+                #     format="svg",
+                # )
+                relation_graphs[record] = {
+                    "source": graph.source,
+                    # "svg": rendered.decode("utf-8"),
+                }
+
+        return relation_graphs
+
+    async def dump(self) -> dict:
+        dumped = {
+            "plugins": self.dump_plugins(),
+            "files": self.dump_files(),
+            "iocs": self.dump_iocs(),
+            "pv_relations": await self.dump_pv_relations(),
+        }
+        logger.info(
+            "Dumped %d plugins, %d files, %d PV relation graphs, and %d IOCs",
+            len(dumped["plugins"]),
+            len(dumped["files"]),
+            len(dumped["pv_relations"]),
+            len(dumped["iocs"]),
+        )
+        return dumped
+
+    async def dump_to_file(
+        self,
+        filename: pathlib.Path,
+        indent: int = 0,
+        encoding: str = "utf-8",
+    ) -> None:
+        if filename.suffix.lower() not in (".json", ".gz"):
+            raise RuntimeError(
+                f"Output format not supported yet: {filename.suffix}. "
+                f"You probably want .json.gz, by the way, if you're intending "
+                f"to use the frontend with these results."
+            )
+
+        output = await self.dump()
+        dumped = json.dumps(output, sort_keys=True, indent=indent)
+        if filename.suffix.lower() in (".json", ):
+            with open(filename, "wt") as fp:
+                print(dumped, file=fp)
+        elif filename.suffix.lower() in (".gz", ):
+            with gzip.open(filename, "wb") as fp:
+                fp.write(dumped.encode(encoding))
+
     @property
     def iocs_by_name(self) -> Dict[str, IocMetadata]:
         """Dictionary of IOC name to IocMetadata."""
@@ -154,6 +290,22 @@ class ServerState:
         for plugin in self.plugins:
             self.tasks.create(self._update_plugin_loop(plugin))
 
+    async def _update_plugin(self, plugin: ServerPluginSpec):
+        """Update the specified plugin."""
+        with common.time_context() as ctx:
+            try:
+                await plugin.update()
+            except Exception:
+                logger.exception(
+                    "Failed to update plugin %r [%.1f s]",
+                    plugin.name, ctx()
+                )
+            else:
+                logger.info(
+                    "Successfully updated plugin %r [%.1f s]",
+                    plugin.name, ctx()
+                )
+
     async def _update_plugin_loop(self, plugin: ServerPluginSpec):
         while self.running and self.update_count == 0 and plugin.after_iocs:
             # Wait until IOCs have been loaded before updating this one for the
@@ -164,58 +316,51 @@ class ServerState:
 
         while self.running:
             logger.info("Updating plugin: %s", plugin.name)
-            with common.time_context() as ctx:
-                try:
-                    await plugin.update()
-                except Exception:
-                    logger.exception(
-                        "Failed to update plugin %r [%.1f s]",
-                        plugin.name, ctx()
-                    )
-                else:
-                    logger.info(
-                        "Successfully updated plugin %r [%.1f s]",
-                        plugin.name, ctx()
-                    )
-
+            await self._update_plugin(plugin)
             # for record, md in info["record_to_metadata"].items():
             #     ...
             await asyncio.sleep(settings.SERVER_SCAN_PERIOD)
 
         logger.info("Server plugin %r updates finished.", plugin.name)
 
+    async def _update_script_step(self) -> bool:
+        """Update scripts from the script loader."""
+        logger.info("Checking for new or updated IOCs...")
+        await self.update_script_loaders()
+
+        logger.info("Checking for changed scripts and database files...")
+        self._load_gateway_config()
+
+        updated = self.get_updated_iocs()
+        if not updated:
+            logger.info("No changes found.")
+            return False
+
+        logger.info(
+            "%d IOC%s changed.", len(updated),
+            " has" if len(updated) == 1 else "s have"
+        )
+        for idx, ioc in enumerate(updated[:10], 1):
+            logger.info("* %d: %s", idx, ioc.name)
+        if len(updated) > 10:
+            logger.info("... and %d more", len(updated) - 10)
+
+        with common.time_context() as ctx:
+            await self.update_iocs(updated)
+            logger.info(
+                "Updated %d IOCs in %.1f seconds", len(updated), ctx()
+            )
+        self.clear_cache()
+        return True
+
     async def _update_loop(self):
         """Update scripts from the script loader and watch for updates."""
         while self.running:
-            logger.info("Checking for new or updated IOCs...")
-            await self.update_script_loaders()
-
-            logger.info("Checking for changed scripts and database files...")
-            self._load_gateway_config()
-
-            updated = self.get_updated_iocs()
-            if not updated:
-                logger.info("No changes found.")
-                await asyncio.sleep(settings.SERVER_SCAN_PERIOD)
-                continue
-
-            logger.info(
-                "%d IOC%s changed.", len(updated),
-                " has" if len(updated) == 1 else "s have"
-            )
-            for idx, ioc in enumerate(updated[:10], 1):
-                logger.info("* %d: %s", idx, ioc.name)
-            if len(updated) > 10:
-                logger.info("... and %d more", len(updated) - 10)
-
-            with common.time_context() as ctx:
-                await self.update_iocs(updated)
-                logger.info(
-                    "Updated %d IOCs in %.1f seconds", len(updated), ctx()
-                )
-            self.clear_cache()
-
-            await asyncio.sleep(settings.SERVER_SCAN_PERIOD)
+            changes = await self._update_script_step()
+            poll_period = settings.SERVER_SCAN_PERIOD
+            if not changes:
+                poll_period *= 2
+            await asyncio.sleep(poll_period)
 
         logger.info("Server script updates finished.")
 
@@ -593,6 +738,7 @@ class ServerHandler:
     async def api_pv_get_info(self, request: web.Request):
         pv_names = request.query.getall("pv")
         info = {pv_name: self.state.whatrec(pv_name) for pv_name in pv_names}
+        " {pv_name: ..., present: True, info=[whatrec]}"
         return serialized_response(
             {
                 pv_name: PVGetInfo(
@@ -933,6 +1079,7 @@ def main(
     standin_directory: Optional[Union[List, Dict]] = None,
     port: int = 8898,
     use_tracemalloc: bool = False,
+    offline_dump_target: Optional[AnyPath] = None,
     start: bool = True,
 ):
     if use_tracemalloc and tracemalloc is not None:
@@ -948,7 +1095,16 @@ def main(
         standin_directory=standin_directory,
     )
     handler = ServerHandler(state)
-    app = _new_server(handler, port=port, run=True)
+    if offline_dump_target is None:
+        # Run the server.
+        run = True
+    else:
+        # Dump to a file - but don't start the server.
+        asyncio.run(state.trigger_manual_update())
+        asyncio.run(state.dump_to_file(pathlib.Path(offline_dump_target)))
+        run = False
+
+    app = _new_server(handler, port=port, run=run)
 
     if use_tracemalloc and tracemalloc is not None:
         global tracemalloc_snapshot

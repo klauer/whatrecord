@@ -96,9 +96,10 @@
       <ioc-info :ioc_info="whatrec.ioc" />
     </AccordionTab>
     <AccordionTab header="Record links">
-      <a :href="graph_link" target="_blank">
+      <a :href="graph_link" v-if="graph_link" target="_blank">
         <img class="svg-graph" :src="graph_link" />
       </a>
+      <div id="d3-rendered-graph" />
     </AccordionTab>
     <AccordionTab header="Archiver" v-if="record != null">
       <template v-if="record != null && appliance_viewer_url">
@@ -186,6 +187,8 @@ import DataTable from "primevue/datatable";
 
 import { plugins } from "../settings.js";
 
+import { graphviz } from "d3-graphviz";
+
 export default {
   name: "Recordinfo",
   props: {
@@ -214,7 +217,9 @@ export default {
       return appliance_viewer_url + this.record.name;
     },
     graph_link() {
-      return `/api/pv/graph?pv=${this.whatrec.name}&format=svg`;
+      return "";
+      // TODO uncomment
+      // return `/api/pv/graph?pv=${this.whatrec.name}&format=svg`;
     },
     script_graph_link() {
       return `/api/pv/script-graph?pv=${this.whatrec.name}&format=svg`;
@@ -235,6 +240,11 @@ export default {
     record() {
       return this.whatrec.record ? this.whatrec.record.instance : null;
     },
+    pv_relation_dot_source() {
+      const pv_relations =
+        this.$store.state.cache?.pv_relations[this.record?.name] ?? null;
+      return pv_relations ? pv_relations.source : null;
+    },
     record_defn() {
       return this.whatrec.record ? this.whatrec.record.definition : null;
     },
@@ -254,12 +264,37 @@ export default {
       return plugins;
     },
   },
+  async created() {
+    this.$watch(
+      () => this.$route.params,
+      (to_params) => {
+        this.from_route(to_params, this.$route.query);
+      }
+    );
+    await this.from_route(this.$route.params, this.$route.query);
+  },
+  async mounted() {
+    const graph = graphviz("#d3-rendered-graph");
+    graph.scale(0.5);
+    graph.height(600);
+    graph.renderDot(this.pv_relation_dot_source);
+  },
+  methods: {
+    async from_route(params, query) {
+      console.log("from route", params, query);
+    },
+  },
 };
 </script>
 
 <style scoped>
 .svg-graph {
   max-width: 70%;
+}
+
+.d3-rendered-graph {
+  max-width: 70%;
+  max-height: 50%;
 }
 
 .monospace {

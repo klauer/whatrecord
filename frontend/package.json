@@ -12,13 +12,16 @@
     "axios": "^1.4.0",
     "cytoscape": "^3.25.0",
     "cytoscape-fcose": "^2.2.0",
+    "d3-graphviz": "^5.0.2",
+    "d3-selection": "^3.0.0",
     "es6-promise": "^4.2.8",
     "primeflex": "^3.3.0",
     "primeicons": "^6.0.1",
     "primevue": "3.29.1",
     "vue": "^3.3.4",
     "vue-router": "^4.2.1",
-    "vuex": "^4.1.0"
+    "vuex": "^4.1.0",
+    "wildcard-match": "^5.1.2"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^4.2.3",

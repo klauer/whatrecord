@@ -13,8 +13,8 @@ services:
       - ./support:/usr/share/whatrecord/support
     entrypoint: /bin/sh
     command: /usr/share/whatrecord/support/start_frontend.sh
-    depends_on:
-      - whatrecord
+    # depends_on:
+    #   - whatrecord
 
   whatrecord:
     env_file:

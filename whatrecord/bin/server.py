@@ -68,6 +68,13 @@ def build_arg_parser(parser=None):
         help='[Debug] Use tracemalloc to debug server memory usage'
     )
 
+    parser.add_argument(
+        '--dump-for-offline-usage',
+        dest="offline_dump_target",
+        type=str,
+        help='Dump the server state for offline usage of the whatrecord frontend'
+    )
+
     return parser
 
 

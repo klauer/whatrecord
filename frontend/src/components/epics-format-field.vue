@@ -90,7 +90,7 @@ export default {
     },
 
     menu_options() {
-      if (!this.field_info?.menu) {
+      if (!this.field_info?.menu || !this.menus) {
         return null;
       }
       return this.menus[this.field_info.menu]?.choices;

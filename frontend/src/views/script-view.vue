@@ -81,7 +81,10 @@ export default {
     },
     is_twincat_file() {
       const extension = this.filename.split(".").pop() || "";
-      return ["tcpou", "tcgvl", "tcdut"].indexOf(extension.toLowerCase()) >= 0;
+      return (
+        ["tcpou", "tcgvl", "tcdut", "tcio"].indexOf(extension.toLowerCase()) >=
+        0
+      );
     },
     lines() {
       if (this.is_twincat_file) {
