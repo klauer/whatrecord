@@ -18,6 +18,7 @@ export const remote_store = createStore({
     query_in_progress: false,
     record_info: {},
     regex_to_pvs: {},
+    is_online: true,
   }),
   mutations: {
     start_query(state) {
@@ -339,6 +340,7 @@ export const cached_local_store = createStore({
     query_in_progress: false,
     record_info: {},
     regex_to_pvs: {},
+    is_online: false,
   }),
   mutations: {
     start_query(state) {
@@ -361,7 +363,7 @@ export const cached_local_store = createStore({
       }
     },
     set_cache(state, { cache }) {
-      console.log("Got cached whatrecord information from server", cache);
+      console.debug("Got cached whatrecord information from archive", cache);
       state.cache = cache;
     },
     set_duplicates(state, { duplicates }) {
@@ -414,6 +416,7 @@ export const cached_local_store = createStore({
       }
       try {
         await context.commit("start_query");
+        console.debug("Downloading cached whatrecord server data");
         const response = await axios.get("/cache.json.gz", {
           decompress: true,
           headers: {
@@ -545,7 +548,7 @@ export const cached_local_store = createStore({
           // info[record_name] = {"pv_name": record_name, present: true, "info": [whatrec]};
           // TODO: Why is this so convoluted? refactor this!
           info = { pv_name: record_name, present: true, info: [whatrec] };
-          console.log("whatrec", info[record_name]);
+          console.debug("whatrec", info);
           await context.commit("add_record_info", {
             record: record_name,
             info: info,
@@ -568,7 +571,7 @@ export const cached_local_store = createStore({
           // info[record_name] = {"pv_name": record_name, present: true, "info": [whatrec]};
           // TODO: Why is this so convoluted? refactor this!
           info = { pv_name: record_name, present: true, info: [whatrec] };
-          console.log("whatrec", info[record_name]);
+          console.debug("whatrec", info);
           await context.commit("add_record_info", {
             record: record_name,
             info: info,

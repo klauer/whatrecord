@@ -247,7 +247,7 @@ class ShellState(ShellStateHandler):
 
         # for rec in list(self.database.values()) + list(self.pva_database.values()):
         #     try:
-        #         self.annotate_record(rec)
+        #         rec.metadata.update(self.annotate_record(rec))
         #     except Exception:
         #         logger.exception("Failed to annotate record: %s", rec.name)
 
@@ -596,7 +596,7 @@ class ShellState(ShellStateHandler):
         # per-record whatrecord queries
         # if self.annotate_all:
         #     for record in db.records.values():
-        #         self.annotate_record(record)
+        #         record.metadata.update(self.annotate_record(record))
 
         return {
             "context": [LoadContext(str(filename), 0)],
@@ -605,8 +605,9 @@ class ShellState(ShellStateHandler):
             "lint": db.lint,
         }
 
-    def annotate_record(self, record: RecordInstance) -> Optional[Dict[str, Any]]:
+    def annotate_record(self, record: RecordInstance) -> Dict[str, Any]:
         """Hook to annotate a record after being loaded."""
+        result = {}
         for handler in self.sub_handlers:
             try:
                 annotation = handler.annotate_record(record)
@@ -617,7 +618,10 @@ class ShellState(ShellStateHandler):
                 )
             else:
                 if annotation is not None:
-                    record.metadata[handler.metadata_key] = annotation
+                    # record.metadata[handler.metadata_key] = annotation
+                    result[handler.metadata_key] = annotation
+
+        return result
 
     @_handler
     def handle_dbl(self, rtyp: str = "", fields: str = ""):
@@ -711,7 +715,11 @@ class ScriptContainer:
         fmt = FormatContext()
         result = []
         for name, loaded in self.scripts.items():
-            info: WhatRecord = loaded.whatrec(rec, field, include_pva=include_pva)
+            info: Optional[WhatRecord] = loaded.whatrec(
+                rec,
+                field,
+                include_pva=include_pva,
+            )
             if info is not None:
                 info.ioc = loaded.metadata
                 for match in [info.record, info.pva_group]:
@@ -934,7 +942,7 @@ class LoadedIoc:
                 what.menus = state.database_definition.menus
                 # but what about device types and such?
 
-            state.annotate_record(v3_inst)
+            v3_inst.metadata.update(state.annotate_record(v3_inst))
             what.record = RecordDefinitionAndInstance(defn, v3_inst)
 
         if pva_inst is not None:

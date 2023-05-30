@@ -116,7 +116,7 @@ class ServerState:
         ]
         self._update_count = 0
 
-    async def trigger_manual_update(self) -> None:
+    async def trigger_manual_update(self, annotate_records: bool = True) -> None:
         """Manual re-scan of everything."""
         updated = await self._update_script_step()
         logger.debug(
@@ -130,6 +130,22 @@ class ServerState:
             self.container.database,
             self.container.pv_relations,
         )
+
+        if not annotate_records:
+            return
+
+        for ioc in self.container.scripts.values():
+            for record in ioc.shell_state.database.values():
+                record.metadata.update(self.get_record_annnotations(ioc, record))
+                for fn, hash_ in ioc.shell_state.loaded_files.items():
+                    if fn not in self.container.loaded_files:
+                        logger.info(
+                            "Record annotation for %s loaded a new file dynamically: %s (%s)",
+                            ioc.name,
+                            fn,
+                            hash_,
+                        )
+                        self.container.loaded_files[fn] = hash_
 
     def dump_file(self, filename: AnyPath, recorded_hash: str = "") -> dict:
         # TODO recorded hash may differ from what's on disk!
@@ -460,6 +476,36 @@ class ServerState:
                 logger.debug("New gateway file: %s (%s)", filename, pvlist.hash)
                 self.container.loaded_files[str(filename)] = pvlist.hash
 
+    def get_record_annnotations(
+        self,
+        ioc: LoadedIoc,
+        instance: RecordInstance,
+    ) -> Dict[StringWithContext, Any]:
+        """
+        Get IOC/plugin-provided annotations for the given record.
+        """
+        md = {}
+
+        if not instance.is_pva:
+            # For now, V3 only
+            gateway_key = StringWithContext("gateway", context=())
+            md[gateway_key] = apischema.serialize(
+                self.get_gateway_matches(instance.name)
+            )
+
+            md.update(ioc.shell_state.annotate_record(instance))
+
+        for plugin in self.plugins:
+            if not plugin.results:
+                continue
+
+            info = list(plugin.results.find_record_metadata(instance.name))
+            if info:
+                plugin_key = StringWithContext(plugin.name, context=())
+                instance.metadata[plugin_key] = info
+
+        return md
+
     def annotate_whatrec(self, ioc: LoadedIoc, what: WhatRecord) -> WhatRecord:
         """
         Annotate WhatRecord instances with things ServerState knows about.
@@ -472,22 +518,8 @@ class ServerState:
             if instance is None:
                 continue
 
-            if not instance.is_pva:
-                # For now, V3 only
-                instance.metadata["gateway"] = apischema.serialize(
-                    self.get_gateway_matches(instance.name)
-                )
-
-                ioc.shell_state.annotate_record(instance)
-
-            for plugin in self.plugins:
-                if not plugin.results:
-                    continue
-
-                info = list(plugin.results.find_record_metadata(instance.name))
-                if info:
-                    plugin_key = StringWithContext(plugin.name, context=())
-                    instance.metadata[plugin_key] = info
+            md = self.get_record_annnotations(ioc, instance)
+            instance.metadata.update(md)
 
         return what
 
@@ -1100,7 +1132,7 @@ def main(
         run = True
     else:
         # Dump to a file - but don't start the server.
-        asyncio.run(state.trigger_manual_update())
+        asyncio.run(state.trigger_manual_update(annotate_records=True))
         asyncio.run(state.dump_to_file(pathlib.Path(offline_dump_target)))
         run = False
 

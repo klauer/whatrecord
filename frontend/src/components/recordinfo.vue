@@ -95,13 +95,19 @@
     <AccordionTab :header="`Part of ${whatrec.ioc.name}`">
       <ioc-info :ioc_info="whatrec.ioc" />
     </AccordionTab>
-    <AccordionTab header="Record links">
+    <AccordionTab header="Record links" v-if="show_links">
       <a :href="graph_link" v-if="graph_link" target="_blank">
         <img class="svg-graph" :src="graph_link" />
       </a>
+      <div v-else>
+        <a id="link-save-svg">Save</a>
+      </div>
       <div id="d3-rendered-graph" />
     </AccordionTab>
-    <AccordionTab header="Archiver" v-if="record != null">
+    <AccordionTab
+      header="Archiver"
+      v-if="record != null && appliance_viewer_url"
+    >
       <template v-if="record != null && appliance_viewer_url">
         <a :href="appliance_viewer_url" target="_blank"> Archive Viewer </a>
         <iframe :src="appliance_viewer_url" title="Archive viewer" />
@@ -216,12 +222,22 @@ export default {
       }
       return appliance_viewer_url + this.record.name;
     },
+    show_links() {
+      if (this.graph_link || this.pv_relation_dot_source) {
+        return true;
+      }
+      return false;
+    },
     graph_link() {
-      return "";
-      // TODO uncomment
-      // return `/api/pv/graph?pv=${this.whatrec.name}&format=svg`;
+      if (!this.$store.state.is_online) {
+        return null;
+      }
+      return `/api/pv/graph?pv=${this.whatrec.name}&format=svg`;
     },
     script_graph_link() {
+      if (!this.$store.state.is_online) {
+        return null;
+      }
       return `/api/pv/script-graph?pv=${this.whatrec.name}&format=svg`;
     },
     available_protocols() {
@@ -273,21 +289,49 @@ export default {
     );
     await this.from_route(this.$route.params, this.$route.query);
   },
+
   async mounted() {
     const graph = graphviz("#d3-rendered-graph");
-    graph.scale(0.5);
-    graph.height(600);
     graph.renderDot(this.pv_relation_dot_source);
+    graph.fit(false);
+    graph.render(this.finished_d3_graph_render);
   },
+
   methods: {
     async from_route(params, query) {
-      console.log("from route", params, query);
+      console.debug("From route", params, query);
+    },
+    finished_d3_graph_render() {
+      console.debug("Finished render; creating link...");
+      const graph_elem = document.getElementById("d3-rendered-graph");
+      // For removing &nbsp; and such:
+      const dummy = document.createElement("div");
+      var svg_data = graph_elem.innerHTML.replace(
+        /(&(?!(amp|gt|lt|quot|apos))[^;]+;)/g,
+        (a) => {
+          dummy.innerHTML = a;
+          return dummy.textContent;
+        }
+      );
+      const preface = '<?xml version="1.0" standalone="no"?>\r\n';
+      const blob = new Blob([preface, svg_data], {
+        type: "image/svg+xml;charset=utf-8",
+      });
+      var url = URL.createObjectURL(blob);
+      const save_element = document.getElementById("link-save-svg");
+      save_element.href = url;
+      save_element.download = `${this.whatrec.name}.svg`;
     },
   },
 };
 </script>
 
 <style scoped>
+#button-save-svg {
+  max-width: 10%;
+  max-height: 10%;
+}
+
 .svg-graph {
   max-width: 70%;
 }

@@ -314,6 +314,7 @@ class StreamDeviceState(ShellStateHandler):
         if key not in self.protocols:
             shell_state = self.primary_handler
             fn, contents = shell_state.load_file(filename)
+            print("loading!", filename, shell_state.loaded_files)
             self.protocols[key] = StreamProtocol.from_string(
                 contents,
                 filename=fn
